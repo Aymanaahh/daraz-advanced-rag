@@ -1,9 +1,9 @@
+from __future__ import annotations
 
 import time
-from datetime import datetime
+from typing import Any, Dict, List
 
 import streamlit as st
-from dotenv import load_dotenv
 
 from rag.advanced_retriever import AdvancedRetriever
 from rag.generator import GroqGenerator
@@ -11,125 +11,20 @@ from rag.citation_validator import CitationValidator
 from rag.logger import RAGLogger
 
 
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-
-load_dotenv()
+# ============================================================
+# PAGE CONFIG
+# ============================================================
 
 st.set_page_config(
-    page_title="Daraz Operations AI",
+    page_title="Daraz Advanced RAG Assistant",
     page_icon="🛒",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 
-# =============================================================================
-# CUSTOM CSS
-# =============================================================================
-
-st.markdown(
-    """
-    <style>
-        .main {
-            padding-top: 1rem;
-        }
-
-        .app-title {
-            font-size: 2.4rem;
-            font-weight: 700;
-            margin-bottom: 0.2rem;
-        }
-
-        .app-subtitle {
-            font-size: 1.05rem;
-            color: #6b7280;
-            margin-bottom: 1.5rem;
-        }
-
-        .metric-card {
-            background: #f8fafc;
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 1rem;
-            text-align: center;
-            margin-bottom: 0.5rem;
-        }
-
-        .metric-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
-
-        .metric-label {
-            font-size: 0.85rem;
-            color: #6b7280;
-        }
-
-        .source-card {
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
-            padding: 1rem;
-            margin-bottom: 0.8rem;
-            background: #ffffff;
-        }
-
-        .source-id {
-            font-weight: 700;
-            font-size: 0.95rem;
-        }
-
-        .source-meta {
-            color: #6b7280;
-            font-size: 0.82rem;
-            margin-top: 0.25rem;
-            margin-bottom: 0.6rem;
-        }
-
-        .source-text {
-            font-size: 0.9rem;
-            line-height: 1.55;
-        }
-
-        .status-success {
-            padding: 0.7rem;
-            border-radius: 8px;
-            background: #ecfdf5;
-            border: 1px solid #a7f3d0;
-            color: #065f46;
-        }
-
-        .status-warning {
-            padding: 0.7rem;
-            border-radius: 8px;
-            background: #fffbeb;
-            border: 1px solid #fde68a;
-            color: #92400e;
-        }
-
-        .citation-badge {
-            display: inline-block;
-            background: #eff6ff;
-            border: 1px solid #bfdbfe;
-            border-radius: 6px;
-            padding: 2px 7px;
-            margin: 2px;
-            font-size: 0.78rem;
-        }
-
-        footer {
-            visibility: hidden;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# =============================================================================
+# ============================================================
 # SESSION STATE
-# =============================================================================
+# ============================================================
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -137,19 +32,13 @@ if "messages" not in st.session_state:
 if "last_result" not in st.session_state:
     st.session_state.last_result = None
 
-if "system_initialized" not in st.session_state:
-    st.session_state.system_initialized = False
 
-
-# =============================================================================
+# ============================================================
 # LOAD RAG COMPONENTS
-# =============================================================================
+# ============================================================
 
 @st.cache_resource
-def load_rag_system():
-    """
-    Load the complete RAG pipeline once and cache it.
-    """
+def load_components():
 
     retriever = AdvancedRetriever()
     generator = GroqGenerator()
@@ -159,27 +48,14 @@ def load_rag_system():
     return retriever, generator, validator, logger
 
 
-try:
-    retriever, generator, validator, logger = load_rag_system()
-    st.session_state.system_initialized = True
-
-except Exception as exc:
-    st.error("The RAG system could not be initialized.")
-    st.exception(exc)
-    st.stop()
+retriever, generator, validator, logger = load_components()
 
 
-# =============================================================================
+# ============================================================
 # HELPER FUNCTIONS
-# =============================================================================
+# ============================================================
 
-def safe_get(obj, key, default=None):
-    """
-    Safely retrieve a value from either a dictionary or an object.
-    """
-
-    if obj is None:
-        return default
+def safe_get(obj: Any, key: str, default=None):
 
     if isinstance(obj, dict):
         return obj.get(key, default)
@@ -187,47 +63,23 @@ def safe_get(obj, key, default=None):
     return getattr(obj, key, default)
 
 
-# =============================================================================
-# EVIDENCE NORMALIZATION
-# =============================================================================
-
-def normalize_evidence(evidence):
+def normalize_evidence(items: Any) -> List[Dict[str, Any]]:
     """
-    Convert retriever evidence into a consistent list of dictionaries.
+    Normalize retrieved evidence into a predictable list of dictionaries.
     """
 
-    if evidence is None:
+    if items is None:
         return []
 
-    if isinstance(evidence, dict):
+    if isinstance(items, dict):
+        items = [items]
 
-        for key in [
-            "final_results",
-            "evidence",
-            "results",
-            "documents",
-            "chunks",
-        ]:
-
-            if key in evidence:
-
-                value = evidence[key]
-
-                if isinstance(value, list):
-                    evidence = value
-                    break
-
-    if not isinstance(evidence, list):
-
-        try:
-            evidence = list(evidence)
-
-        except Exception:
-            return []
+    if not isinstance(items, list):
+        return []
 
     normalized = []
 
-    for item in evidence:
+    for item in items:
 
         if isinstance(item, dict):
 
@@ -235,525 +87,232 @@ def normalize_evidence(evidence):
 
         else:
 
-            normalized.append(
-                {
-                    "chunk_id": safe_get(
-                        item,
-                        "chunk_id"
-                    ),
-
-                    "document_id": safe_get(
-                        item,
-                        "document_id"
-                    ),
-
-                    "file_name": safe_get(
-                        item,
-                        "file_name"
-                    ),
-
-                    "domain": safe_get(
-                        item,
-                        "domain"
-                    ),
-
-                    "document_type": safe_get(
-                        item,
-                        "document_type"
-                    ),
-
-                    "page": safe_get(
-                        item,
-                        "page"
-                    ),
-
-                    "section": safe_get(
-                        item,
-                        "section"
-                    ),
-
-                    "text": safe_get(
-                        item,
-                        "text",
-                        ""
-                    ),
-
-                    "score": safe_get(
-                        item,
-                        "score"
-                    ),
-
-                    "reranker_score": safe_get(
-                        item,
-                        "reranker_score"
-                    ),
-                }
-            )
+            try:
+                normalized.append(vars(item))
+            except Exception:
+                continue
 
     return normalized
 
 
-def get_evidence(result):
+def get_evidence(result: Any) -> List[Dict[str, Any]]:
     """
-    Extract final evidence from AdvancedRetriever output.
-
-    IMPORTANT:
-    AdvancedRetriever.retrieve() returns the selected evidence
-    under the 'final_results' key.
+    AdvancedRetriever currently returns evidence under final_results.
     """
 
-    if result is None:
+    if not isinstance(result, dict):
         return []
 
-    # ------------------------------------------------------------
-    # Exact structure used by AdvancedRetriever
-    # ------------------------------------------------------------
+    # Current architecture
+    if "final_results" in result:
 
-    if isinstance(result, dict):
+        evidence = normalize_evidence(
+            result.get("final_results")
+        )
 
-        if "final_results" in result:
+        if evidence:
+            return evidence
 
-            return normalize_evidence(
-                result["final_results"]
-            )
-
-        # --------------------------------------------------------
-        # Compatibility fallbacks
-        # --------------------------------------------------------
-
-        for key in [
-            "evidence",
-            "results",
-            "documents",
-            "chunks",
-        ]:
-
-            if key in result:
-
-                return normalize_evidence(
-                    result[key]
-                )
-
-    # ------------------------------------------------------------
-    # Object-based compatibility
-    # ------------------------------------------------------------
-
+    # Compatibility fallbacks
     for key in [
-        "final_results",
         "evidence",
         "results",
         "documents",
         "chunks",
     ]:
 
-        value = safe_get(
-            result,
-            key
-        )
+        if key in result:
 
-        if value is not None:
-
-            return normalize_evidence(
-                value
+            evidence = normalize_evidence(
+                result.get(key)
             )
 
-    # ------------------------------------------------------------
-    # Direct list
-    # ------------------------------------------------------------
-
-    if isinstance(result, list):
-
-        return normalize_evidence(
-            result
-        )
+            if evidence:
+                return evidence
 
     return []
 
 
-# =============================================================================
-# QUERY ANALYSIS
-# =============================================================================
+def get_query_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
 
-def get_processed_query(result):
-    """
-    Extract query analysis from retriever output.
-    """
-
-    if result is None:
-        return None
-
-    if isinstance(result, dict):
-
-        for key in [
-            "query_analysis",
-            "analysis",
-            "processed_query",
-        ]:
-
-            if key in result:
-                return result[key]
-
-    for key in [
+    analysis = result.get(
         "query_analysis",
-        "analysis",
-        "processed_query",
-    ]:
-
-        value = safe_get(
-            result,
-            key
-        )
-
-        if value is not None:
-            return value
-
-    return None
-
-
-# =============================================================================
-# RETRIEVER
-# =============================================================================
-
-def call_retriever(query):
-
-    if hasattr(
-        retriever,
-        "retrieve"
-    ):
-
-        return retriever.retrieve(
-            query
-        )
-
-    raise AttributeError(
-        "AdvancedRetriever does not expose "
-        "a retrieve(query) method."
+        {}
     )
 
-
-# =============================================================================
-# GENERATOR
-# =============================================================================
-
-def call_generator(
-    query,
-    evidence
-):
-
-    if hasattr(
-        generator,
-        "generate"
-    ):
-
-        return generator.generate(
-            query,
-            evidence
-        )
-
-    raise AttributeError(
-        "GroqGenerator does not expose "
-        "a generate(query, evidence) method."
-    )
-
-
-# =============================================================================
-# VALIDATOR
-# =============================================================================
-
-def call_validator(
-    answer,
-    evidence
-):
-
-    if hasattr(
-        validator,
-        "validate"
-    ):
-
-        return validator.validate(
-            answer,
-            evidence
-        )
-
-    raise AttributeError(
-        "CitationValidator does not expose "
-        "a validate(answer, evidence) method."
-    )
-
-
-# =============================================================================
-# ANSWER EXTRACTION
-# =============================================================================
-
-def extract_answer(generated):
-
-    if generated is None:
-        return ""
-
-    if isinstance(
-        generated,
-        str
-    ):
-
-        return generated
-
-    if isinstance(
-        generated,
-        dict
-    ):
-
-        for key in [
-            "answer",
-            "response",
-            "text",
-            "content",
-        ]:
-
-            if key in generated:
-                return str(
-                    generated[key]
-                )
-
-    for key in [
-        "answer",
-        "response",
-        "text",
-        "content",
-    ]:
-
-        value = safe_get(
-            generated,
-            key
-        )
-
-        if value is not None:
-            return str(value)
-
-    return str(generated)
-
-
-# =============================================================================
-# CITATIONS
-# =============================================================================
-
-def extract_citations(answer):
-
-    import re
-
-    if not answer:
-        return []
-
-    pattern = (
-        r"\[SOURCE:\s*"
-        r"([A-Za-z0-9_-]+)"
-        r"\]"
-    )
-
-    citations = re.findall(
-        pattern,
-        answer
-    )
-
-    return list(
-        dict.fromkeys(
-            citations
-        )
-    )
-
-
-# =============================================================================
-# SCORE
-# =============================================================================
-
-def format_score(score):
-
-    if score is None:
-        return "N/A"
+    if isinstance(analysis, dict):
+        return analysis
 
     try:
-        return f"{float(score):.4f}"
-
+        return vars(analysis)
     except Exception:
-        return str(score)
+        return {}
 
 
-# =============================================================================
+def get_retrieval_queries(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+
+    queries = result.get(
+        "retrieval_queries",
+        []
+    )
+
+    if not isinstance(queries, list):
+        return []
+
+    normalized = []
+
+    for item in queries:
+
+        if isinstance(item, dict):
+            normalized.append(item)
+
+        else:
+
+            try:
+                normalized.append(vars(item))
+            except Exception:
+                continue
+
+    return normalized
+
+
+def get_retrieval_statistics(result: Dict[str, Any]) -> Dict[str, Any]:
+
+    statistics = result.get(
+        "statistics",
+        {}
+    )
+
+    if isinstance(statistics, dict):
+        return statistics
+
+    try:
+        return vars(statistics)
+    except Exception:
+        return {}
+
+
+# ============================================================
 # QUERY ANALYSIS DISPLAY
-# =============================================================================
+# ============================================================
 
 def display_query_analysis(
-    analysis
+    analysis: Dict[str, Any]
 ):
 
-    if analysis is None:
+    if not analysis:
         return
 
-    domains = safe_get(
-        analysis,
+    st.subheader("Query Analysis")
+
+    domains = analysis.get(
         "domains",
         []
     )
 
-    intents = safe_get(
-        analysis,
+    intents = analysis.get(
         "intents",
         []
     )
 
-    primary_domain = safe_get(
-        analysis,
+    primary_domain = analysis.get(
         "primary_domain"
     )
 
-    # AdvancedRetriever / QueryProcessor uses complex_query.
-    complex_query = safe_get(
-        analysis,
+    complex_query = analysis.get(
         "complex_query",
-        safe_get(
-            analysis,
+        analysis.get(
             "is_complex",
-            safe_get(
-                analysis,
+            analysis.get(
                 "complex",
                 False
             )
         )
     )
 
-    subqueries = safe_get(
-        analysis,
-        "subqueries",
-        []
-    )
-
-    if isinstance(
-        domains,
-        str
-    ):
-
-        domains = [domains]
-
-    if isinstance(
-        intents,
-        str
-    ):
-
-        intents = [intents]
-
-    st.markdown(
-        "### 🔎 Query Analysis"
-    )
-
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
 
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-value">
-                    {primary_domain or "General"}
-                </div>
-                <div class="metric-label">
-                    Primary Domain
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        if domains:
+            st.metric(
+                "Detected Domains",
+                len(domains)
+            )
+        else:
+            st.metric(
+                "Detected Domains",
+                0
+            )
 
     with col2:
 
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-value">
-                    {len(domains)}
-                </div>
-                <div class="metric-label">
-                    Detected Domains
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.metric(
+            "Complex Query",
+            "Yes" if complex_query else "No"
         )
 
     with col3:
 
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-value">
-                    {"Yes" if complex_query else "No"}
-                </div>
-                <div class="metric-label">
-                    Complex Query
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.write("**Primary Domain**")
+
+        if primary_domain:
+            st.write(primary_domain)
+        else:
+            st.write("—")
+
+    with col4:
+
+        st.write("**Primary Intent**")
+
+        if intents:
+            st.write(intents[0])
+        else:
+            st.write("—")
 
     if domains:
 
         st.write(
-            "**Domains:**",
-            ", ".join(
-                str(x)
-                for x in domains
+            "**Domains:** "
+            + ", ".join(
+                str(domain)
+                for domain in domains
             )
         )
 
     if intents:
 
         st.write(
-            "**Intents:**",
-            ", ".join(
-                str(x)
-                for x in intents
+            "**Intents:** "
+            + ", ".join(
+                str(intent)
+                for intent in intents
             )
         )
 
-    if subqueries:
 
-        with st.expander(
-            "View decomposed subqueries"
-        ):
-
-            for index, subquery in enumerate(
-                subqueries,
-                start=1
-            ):
-
-                st.write(
-                    f"**{index}.** {subquery}"
-                )
-
-
-# =============================================================================
-# SOURCE DISPLAY
-# =============================================================================
+# ============================================================
+# EVIDENCE DISPLAY
+# ============================================================
 
 def display_sources(
-    evidence
+    evidence: List[Dict[str, Any]]
 ):
 
-    st.markdown(
-        "### 📚 Retrieved Evidence"
+    st.subheader(
+        f"Retrieved Evidence ({len(evidence)})"
     )
 
     if not evidence:
 
-        st.warning(
-            "No evidence was retrieved "
-            "for this question."
+        st.info(
+            "No evidence chunks were retrieved."
         )
 
         return
 
     st.caption(
-        f"{len(evidence)} evidence chunk(s) "
-        "passed to the generation layer."
+        f"{len(evidence)} evidence chunks passed to the generation layer."
     )
 
     for index, item in enumerate(
@@ -766,14 +325,12 @@ def display_sources(
             "Unknown"
         )
 
-        document_id = item.get(
-            "document_id",
-            "Unknown"
-        )
-
         file_name = item.get(
             "file_name",
-            "Unknown"
+            item.get(
+                "source",
+                "Unknown source"
+            )
         )
 
         domain = item.get(
@@ -781,19 +338,14 @@ def display_sources(
             "Unknown"
         )
 
-        document_type = item.get(
-            "document_type",
-            "Unknown"
-        )
-
         page = item.get(
             "page",
-            "N/A"
+            "—"
         )
 
         section = item.get(
             "section",
-            "N/A"
+            "—"
         )
 
         score = item.get(
@@ -805,520 +357,483 @@ def display_sources(
 
         text = item.get(
             "text",
-            ""
+            item.get(
+                "content",
+                ""
+            )
         )
 
-        st.markdown(
-            f"""
-            <div class="source-card">
+        # Native Streamlit container.
+        # This avoids HTML escaping/rendering problems on Streamlit Cloud.
+        with st.container(border=True):
 
-                <div class="source-id">
-                    {index}. {chunk_id}
-                </div>
+            top_col, score_col = st.columns(
+                [4, 1]
+            )
 
-                <div class="source-meta">
-                    Document: {file_name}
-                    &nbsp; | &nbsp;
-                    Domain: {domain}
-                    &nbsp; | &nbsp;
-                    Page: {page}
-                    &nbsp; | &nbsp;
-                    Reranker Score: {format_score(score)}
-                </div>
+            with top_col:
 
-                <div class="source-meta">
-                    Section: {section}
-                    &nbsp; | &nbsp;
-                    Type: {document_type}
-                    &nbsp; | &nbsp;
-                    Document ID: {document_id}
-                </div>
+                st.markdown(
+                    f"**{index}. {chunk_id}**"
+                )
 
-                <div class="source-text">
-                    {text}
-                </div>
+            with score_col:
 
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                if score is not None:
+
+                    try:
+
+                        st.metric(
+                            "Reranker",
+                            f"{float(score):.4f}"
+                        )
+
+                    except Exception:
+
+                        st.write(
+                            f"Score: {score}"
+                        )
+
+            st.caption(
+                f"{file_name}  •  "
+                f"Domain: {domain}  •  "
+                f"Page: {page}  •  "
+                f"Section: {section}"
+            )
+
+            if text:
+
+                st.write(text)
 
 
-# =============================================================================
+# ============================================================
 # CITATION VALIDATION DISPLAY
-# =============================================================================
+# ============================================================
 
 def display_validation(
-    validation
+    validation: Dict[str, Any]
 ):
 
-    if validation is None:
+    st.subheader(
+        "Citation Validation"
+    )
+
+    if not validation:
+
+        st.warning(
+            "Citation validation information is unavailable."
+        )
+
         return
 
-    valid = safe_get(
-        validation,
+    valid = validation.get(
         "valid",
         False
     )
 
-    coverage = safe_get(
-        validation,
-        "coverage",
-        0
-    )
-
-    citation_count = safe_get(
-        validation,
+    citation_count = validation.get(
         "citation_count",
         0
     )
 
-    valid_count = safe_get(
-        validation,
+    valid_count = validation.get(
         "valid_citation_count",
         0
     )
 
+    # Validator stores coverage as a ratio:
+    # 0.5 means 50%.
+    coverage_ratio = validation.get(
+        "coverage",
+        0.0
+    )
+
     try:
-        coverage_value = float(
-            coverage
+
+        coverage_percentage = (
+            float(coverage_ratio) * 100
         )
 
     except Exception:
-        coverage_value = 0.0
+
+        coverage_percentage = 0.0
 
     if valid:
 
-        st.markdown(
-            f"""
-            <div class="status-success">
-                ✅ <strong>
-                Citation validation passed.
-                </strong><br>
-                {valid_count}/{citation_count}
-                citations are valid.
-                Coverage:
-                {coverage_value:.1f}%
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.success(
+            "✅ Citation validation passed."
         )
 
     else:
 
-        st.markdown(
-            f"""
-            <div class="status-warning">
-                ⚠️ <strong>
-                Citation validation requires attention.
-                </strong><br>
-                Valid citations:
-                {valid_count}/{citation_count}.
-                Coverage:
-                {coverage_value:.1f}%
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.warning(
+            "⚠️ Citation validation found issues."
         )
 
-    invalid = safe_get(
-        validation,
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+
+        st.metric(
+            "Valid Citations",
+            f"{valid_count}/{citation_count}"
+        )
+
+    with col2:
+
+        st.metric(
+            "Coverage",
+            f"{coverage_percentage:.1f}%"
+        )
+
+    with col3:
+
+        invalid_count = len(
+            validation.get(
+                "invalid_citations",
+                []
+            )
+        )
+
+        st.metric(
+            "Invalid Citations",
+            invalid_count
+        )
+
+    invalid = validation.get(
         "invalid_citations",
         []
     )
 
     if invalid:
 
-        st.write(
-            "**Invalid citations:**"
+        st.error(
+            "Invalid citations: "
+            + ", ".join(
+                str(item)
+                for item in invalid
+            )
         )
 
-        for citation in invalid:
-
-            st.code(
-                str(citation)
-            )
-
-    not_cited = safe_get(
-        validation,
-        "retrieved_not_cited",
-        []
-    )
-
-    if not_cited:
-
-        st.write(
-            "**Retrieved evidence not cited:**"
-        )
-
-        for citation in not_cited:
-
-            st.code(
-                str(citation)
-            )
-
-    issues = safe_get(
-        validation,
+    issues = validation.get(
         "issues",
         []
     )
 
     if issues:
 
-        st.write(
-            "**Validation issues:**"
-        )
+        with st.expander(
+            "Validation Issues"
+        ):
 
-        for issue in issues:
+            for issue in issues:
 
-            st.warning(
-                str(issue)
-            )
+                st.write(
+                    f"- {issue}"
+                )
 
 
-# =============================================================================
-# LOGGER
-# =============================================================================
+# ============================================================
+# PIPELINE DETAILS
+# ============================================================
 
-def write_log(
-    query,
-    result,
-    answer,
-    evidence,
-    citations,
-    validation,
-    elapsed
+def display_pipeline_details(
+    result: Dict[str, Any],
+    evidence: List[Dict[str, Any]],
+    citations: List[str],
+    elapsed: float,
 ):
 
-    analysis = get_processed_query(
+    st.subheader(
+        "Pipeline Details"
+    )
+
+    statistics = get_retrieval_statistics(
         result
     )
 
-    retrieval_queries = []
+    col1, col2, col3, col4 = st.columns(4)
 
-    if isinstance(
-        result,
-        dict
-    ):
+    with col1:
 
-        retrieval_queries = result.get(
-            "retrieval_queries",
-            []
+        retrieved_count = statistics.get(
+            "final_results",
+            len(evidence)
         )
+
+        st.metric(
+            "Retrieved Chunks",
+            retrieved_count
+        )
+
+    with col2:
+
+        st.metric(
+            "Citations",
+            len(citations)
+        )
+
+    with col3:
+
+        st.metric(
+            "Response Time",
+            f"{elapsed:.2f}s"
+        )
+
+    with col4:
+
+        st.metric(
+            "Evidence Passed",
+            len(evidence)
+        )
+
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+def write_log(
+    query: str,
+    result: Dict[str, Any],
+    evidence: List[Dict[str, Any]],
+    answer: str,
+    citations: List[str],
+    validation: Dict[str, Any],
+    elapsed: float,
+):
+
+    """
+    Write the complete RAG request using the actual
+    RAGLogger.log_rag_request() signature.
+    """
 
     try:
 
-        if hasattr(
-            logger,
-            "log_rag_request"
-        ):
+        analysis = get_query_analysis(
+            result
+        )
 
-            logger.log_rag_request(
-                query=query,
-                analysis=analysis,
-                retrieval_queries=retrieval_queries,
-                evidence=evidence,
-                answer=answer,
-                citations=citations,
-                validation=validation,
-                timing={
-                    "total_seconds": elapsed
-                },
-                metadata={
-                    "application":
-                        "Daraz Operations AI",
-                    "timestamp":
-                        datetime.now().isoformat(),
-                },
-            )
+        retrieval_queries = get_retrieval_queries(
+            result
+        )
 
-            return True
+        retrieval_statistics = get_retrieval_statistics(
+            result
+        )
 
-    except TypeError:
+        logger.log_rag_request(
 
-        try:
+            query=query,
 
-            logger.log_rag_request(
-                query=query,
-                answer=answer,
-                citations=citations,
-                evidence=evidence,
-                validation=validation,
-            )
+            query_analysis=analysis,
 
-            return True
+            retrieval_queries=retrieval_queries,
 
-        except Exception:
-            pass
+            evidence=evidence,
 
-    except Exception:
-        pass
+            retrieval_statistics=retrieval_statistics,
 
-    return False
+            answer=answer,
+
+            citations=citations,
+
+            citation_validation=validation,
+
+            total_execution_time_ms=(
+                elapsed * 1000
+            ),
+
+            metadata={
+                "application": "daraz-advanced-rag",
+                "environment": "streamlit-cloud",
+            },
+        )
+
+        return True, None
+
+    except Exception as exc:
+
+        return False, exc
 
 
-# =============================================================================
-# COMPLETE RAG PIPELINE
-# =============================================================================
+# ============================================================
+# MAIN RAG PIPELINE
+# ============================================================
 
 def process_question(
-    query
+    query: str
 ):
 
     start_time = time.perf_counter()
 
-    # -------------------------------------------------------------------------
-    # 1. RETRIEVAL
-    # -------------------------------------------------------------------------
+    # --------------------------------------------------------
+    # Retrieval
+    # --------------------------------------------------------
 
-    retrieval_result = call_retriever(
+    retrieval_start = time.perf_counter()
+
+    result = retriever.retrieve(
         query
     )
 
-    # IMPORTANT:
-    # AdvancedRetriever returns final evidence under final_results.
+    retrieval_time = (
+        time.perf_counter()
+        - retrieval_start
+    )
+
+    # --------------------------------------------------------
+    # Evidence
+    # --------------------------------------------------------
+
     evidence = get_evidence(
-        retrieval_result
+        result
     )
 
-    analysis = get_processed_query(
-        retrieval_result
+    # --------------------------------------------------------
+    # Generation
+    # --------------------------------------------------------
+
+    generation_start = time.perf_counter()
+
+    answer = generator.generate(
+        query=query,
+        evidence=evidence,
     )
 
-    # -------------------------------------------------------------------------
-    # 2. GENERATION
-    # -------------------------------------------------------------------------
-
-    generated = call_generator(
-        query,
-        evidence
+    generation_time = (
+        time.perf_counter()
+        - generation_start
     )
 
-    answer = extract_answer(
-        generated
-    )
+    # --------------------------------------------------------
+    # Citation extraction
+    # --------------------------------------------------------
 
-    # -------------------------------------------------------------------------
-    # 3. CITATION EXTRACTION
-    # -------------------------------------------------------------------------
-
-    citations = extract_citations(
+    citations = validator.extract_citations(
         answer
     )
 
-    # -------------------------------------------------------------------------
-    # 4. CITATION VALIDATION
-    # -------------------------------------------------------------------------
+    # --------------------------------------------------------
+    # Validation
+    # --------------------------------------------------------
 
-    validation = call_validator(
-        answer,
-        evidence
+    validation_start = time.perf_counter()
+
+    validation = validator.validate(
+        answer=answer,
+        evidence=evidence,
     )
 
-    # -------------------------------------------------------------------------
-    # 5. LOGGING
-    # -------------------------------------------------------------------------
+    validation_time = (
+        time.perf_counter()
+        - validation_start
+    )
+
+    # --------------------------------------------------------
+    # Total time
+    # --------------------------------------------------------
 
     elapsed = (
         time.perf_counter()
         - start_time
     )
 
-    log_written = write_log(
+    # --------------------------------------------------------
+    # Logging
+    # --------------------------------------------------------
+
+    log_success, log_error = write_log(
         query=query,
-        result=retrieval_result,
-        answer=answer,
+        result=result,
         evidence=evidence,
+        answer=answer,
         citations=citations,
         validation=validation,
         elapsed=elapsed,
     )
 
     return {
-        "query": query,
-        "result": retrieval_result,
-        "analysis": analysis,
+        "result": result,
         "evidence": evidence,
         "answer": answer,
         "citations": citations,
         "validation": validation,
         "elapsed": elapsed,
-        "log_written": log_written,
+        "retrieval_time": retrieval_time,
+        "generation_time": generation_time,
+        "validation_time": validation_time,
+        "log_success": log_success,
+        "log_error": log_error,
     }
 
 
-# =============================================================================
+# ============================================================
 # SIDEBAR
-# =============================================================================
+# ============================================================
 
 with st.sidebar:
 
-    st.markdown(
-        "## 🛒 Daraz Operations AI"
+    st.title(
+        "🛒 Daraz RAG"
     )
 
-    st.caption(
-        "Enterprise-style RAG "
-        "decision-support assistant "
-        "for operational and policy questions."
+    st.markdown(
+        """
+### Advanced Operations Assistant
+
+Ask questions about:
+
+- Sellers
+- Refunds
+- Delivery
+- Payments
+- Returns
+- Customer Support
+"""
     )
 
     st.divider()
 
     st.markdown(
-        "### ⚙️ System Status"
+        "**Example questions**"
     )
 
-    st.success(
-        "RAG system initialized"
-    )
-
-    st.write(
-        "**Vector Store:** FAISS"
-    )
-
-    st.write(
-        "**Lexical Search:** BM25"
-    )
-
-    st.write(
-        "**Reranker:** BGE Cross Encoder"
-    )
-
-    st.write(
-        "**LLM:** Groq"
-    )
-
-    st.write(
-        "**Citations:** Enabled"
-    )
-
-    st.write(
-        "**Logging:** JSONL"
-    )
-
-    st.divider()
-
-    st.markdown(
-        "### 📂 Knowledge Domains"
-    )
-
-    domains = [
-        "🛍️ Sellers",
-        "💰 Refunds",
-        "🚚 Delivery",
-        "💳 Payments",
-        "↩️ Returns",
-        "🎧 Customer Support",
-    ]
-
-    for domain in domains:
-        st.write(domain)
-
-    st.divider()
-
-    if st.button(
-        "🗑️ Clear Conversation",
-        use_container_width=True
-    ):
-
-        st.session_state.messages = []
-        st.session_state.last_result = None
-
-        st.rerun()
-
-    st.divider()
-
-    st.markdown(
-        "### 💡 Example Questions"
-    )
-
-    example_questions = [
-
+    examples = [
         "How long does a refund take?",
-
         "What payment methods are available?",
-
         "Can a customer return a product?",
-
-        "My order is delayed. What should I do?",
-
-        "Can I return a laptop after 10 days and how long will my refund take?",
-
-        "What should a new seller do to get started?",
+        "What are the delivery timelines?",
+        "What should a seller do during onboarding?",
     ]
 
-    for example in example_questions:
+    for example in examples:
 
         if st.button(
             example,
-            key=f"example_{example}",
             use_container_width=True,
         ):
 
-            st.session_state.pending_question = (
-                example
-            )
+            st.session_state.selected_example = example
 
 
-# =============================================================================
-# MAIN HEADER
-# =============================================================================
+# ============================================================
+# HEADER
+# ============================================================
 
-st.markdown(
-    '<div class="app-title">🛒 Daraz Operations AI</div>',
-    unsafe_allow_html=True,
+st.title(
+    "🛒 Daraz Operations & Policy Assistant"
 )
 
-st.markdown(
-    """
-    <div class="app-subtitle">
-        Grounded RAG assistant for Daraz operational policies,
-        procedures, customer support, sellers, payments, refunds,
-        returns, and delivery.
-    </div>
-    """,
-    unsafe_allow_html=True,
+st.write(
+    "Enterprise-style hybrid RAG with semantic retrieval, "
+    "BM25 search, reranking, grounded generation, "
+    "citation validation, and request logging."
 )
 
 
-# =============================================================================
-# TOP METRICS
-# =============================================================================
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.metric(
-        "Knowledge Chunks",
-        "21"
-    )
-
-with col2:
-    st.metric(
-        "Knowledge Domains",
-        "6"
-    )
-
-with col3:
-    st.metric(
-        "Retrieval",
-        "Hybrid"
-    )
-
-with col4:
-    st.metric(
-        "Grounding",
-        "Citations"
-    )
-
-
-st.divider()
-
-
-# =============================================================================
+# ============================================================
 # CHAT HISTORY
-# =============================================================================
+# ============================================================
 
 for message in st.session_state.messages:
 
@@ -1330,64 +845,30 @@ for message in st.session_state.messages:
             message["content"]
         )
 
-        if (
-            message["role"]
-            == "assistant"
-        ):
 
-            message_result = message.get(
-                "result"
-            )
-
-            if message_result:
-
-                citations = (
-                    message_result.get(
-                        "citations",
-                        []
-                    )
-                )
-
-                if citations:
-
-                    st.markdown(
-                        "**Sources:**"
-                    )
-
-                    for citation in citations:
-
-                        st.markdown(
-                            f"""
-                            <span class="citation-badge">
-                                {citation}
-                            </span>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-
-
-# =============================================================================
+# ============================================================
 # INPUT
-# =============================================================================
+# ============================================================
 
-pending_question = (
-    st.session_state.pop(
-        "pending_question",
-        None
-    )
+selected_example = st.session_state.get(
+    "selected_example"
 )
 
 query = st.chat_input(
-    "Ask a question about Daraz operations, policies, refunds, returns, delivery, payments, or sellers..."
+    "Ask a Daraz operations or policy question..."
 )
 
-if pending_question and not query:
-    query = pending_question
+if selected_example and not query:
+
+    query = selected_example
+
+    # Prevent repeated automatic execution
+    st.session_state.selected_example = None
 
 
-# =============================================================================
-# PROCESS QUESTION
-# =============================================================================
+# ============================================================
+# EXECUTE
+# ============================================================
 
 if query:
 
@@ -1399,226 +880,146 @@ if query:
             "Please enter a question."
         )
 
-        st.stop()
+    else:
 
-    # -------------------------------------------------------------------------
-    # USER MESSAGE
-    # -------------------------------------------------------------------------
-
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": query,
-        }
-    )
-
-    with st.chat_message(
-        "user"
-    ):
-
-        st.markdown(
-            query
+        # Store user message
+        st.session_state.messages.append(
+            {
+                "role": "user",
+                "content": query,
+            }
         )
 
-    # -------------------------------------------------------------------------
-    # ASSISTANT
-    # -------------------------------------------------------------------------
+        with st.chat_message(
+            "user"
+        ):
 
-    with st.chat_message(
-        "assistant"
-    ):
+            st.markdown(query)
 
-        progress = st.status(
-            "Running RAG pipeline...",
-            expanded=True,
-        )
+        with st.chat_message(
+            "assistant"
+        ):
 
-        try:
-
-            progress.write(
-                "🔎 Analyzing query..."
-            )
-
-            progress.write(
-                "🔍 Searching FAISS + BM25..."
-            )
-
-            progress.write(
-                "🎯 Reranking retrieved evidence..."
-            )
-
-            progress.write(
-                "🤖 Generating grounded answer..."
-            )
-
-            progress.write(
-                "🔗 Validating citations..."
-            )
-
-            # -------------------------------------------------------------
-            # RUN COMPLETE PIPELINE
-            # -------------------------------------------------------------
-
-            result = process_question(
-                query
-            )
-
-            progress.update(
-                label="RAG pipeline completed",
-                state="complete",
-                expanded=False,
-            )
-
-            # -------------------------------------------------------------
-            # ANSWER
-            # -------------------------------------------------------------
-
-            st.markdown(
-                "## Answer"
-            )
-
-            st.markdown(
-                result["answer"]
-            )
-
-            # -------------------------------------------------------------
-            # CITATION VALIDATION
-            # -------------------------------------------------------------
-
-            with st.expander(
-                "🔗 Citation Validation",
-                expanded=True
+            with st.spinner(
+                "Running advanced RAG pipeline..."
             ):
 
-                display_validation(
-                    result["validation"]
-                )
+                try:
 
-            # -------------------------------------------------------------
-            # QUERY ANALYSIS
-            # -------------------------------------------------------------
-
-            with st.expander(
-                "🔎 Query Analysis",
-                expanded=False
-            ):
-
-                display_query_analysis(
-                    result["analysis"]
-                )
-
-            # -------------------------------------------------------------
-            # RETRIEVED EVIDENCE
-            # -------------------------------------------------------------
-
-            with st.expander(
-                f"📚 Retrieved Evidence "
-                f"({len(result['evidence'])})",
-                expanded=False,
-            ):
-
-                display_sources(
-                    result["evidence"]
-                )
-
-            # -------------------------------------------------------------
-            # PIPELINE DETAILS
-            # -------------------------------------------------------------
-
-            with st.expander(
-                "⚙️ Pipeline Details",
-                expanded=False
-            ):
-
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-
-                    st.metric(
-                        "Retrieved Chunks",
-                        len(
-                            result[
-                                "evidence"
-                            ]
-                        ),
+                    output = process_question(
+                        query
                     )
 
-                with col2:
+                    result = output["result"]
 
-                    st.metric(
-                        "Citations",
-                        len(
-                            result[
-                                "citations"
-                            ]
-                        ),
-                    )
+                    evidence = output["evidence"]
 
-                with col3:
+                    answer = output["answer"]
 
-                    st.metric(
-                        "Response Time",
-                        f"{result['elapsed']:.2f}s",
-                    )
+                    citations = output["citations"]
 
-                if result[
-                    "log_written"
-                ]:
+                    validation = output["validation"]
+
+                    elapsed = output["elapsed"]
+
+                    # ------------------------------------------------
+                    # Pipeline status
+                    # ------------------------------------------------
 
                     st.success(
-                        "Request logged successfully."
+                        "RAG pipeline completed"
                     )
 
-                else:
+                    # ------------------------------------------------
+                    # Answer
+                    # ------------------------------------------------
 
-                    st.warning(
-                        "Response generated, "
-                        "but request logging failed."
+                    st.subheader(
+                        "Answer"
                     )
 
-        except Exception as exc:
+                    st.markdown(
+                        answer
+                    )
 
-            progress.update(
-                label="RAG pipeline failed",
-                state="error",
-                expanded=True,
-            )
+                    # ------------------------------------------------
+                    # Validation
+                    # ------------------------------------------------
 
-            st.error(
-                "The RAG pipeline encountered "
-                "an error."
-            )
+                    display_validation(
+                        validation
+                    )
 
-            st.exception(
-                exc
-            )
+                    # ------------------------------------------------
+                    # Query analysis
+                    # ------------------------------------------------
 
-            # Do not save an incomplete
-            # assistant message.
-            st.stop()
+                    display_query_analysis(
+                        get_query_analysis(
+                            result
+                        )
+                    )
 
-    # -------------------------------------------------------------------------
-    # SAVE ASSISTANT MESSAGE
-    # -------------------------------------------------------------------------
+                    # ------------------------------------------------
+                    # Evidence
+                    # ------------------------------------------------
 
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": result["answer"],
-            "result": result,
-        }
-    )
+                    display_sources(
+                        evidence
+                    )
 
-    st.session_state.last_result = result
+                    # ------------------------------------------------
+                    # Pipeline details
+                    # ------------------------------------------------
 
+                    display_pipeline_details(
+                        result=result,
+                        evidence=evidence,
+                        citations=citations,
+                        elapsed=elapsed,
+                    )
 
-# =============================================================================
-# FOOTER
-# =============================================================================
+                    # ------------------------------------------------
+                    # Logging status
+                    # ------------------------------------------------
 
-st.divider()
+                    if output["log_success"]:
 
-st.caption(
-    "Daraz Operations AI • Hybrid RAG • FAISS + BM25 • "
-    "BGE Reranking • Groq LLM • Citation Validation • Retrieval Logging"
-)
+                        st.caption(
+                            "✅ RAG request logged successfully."
+                        )
+
+                    else:
+
+                        st.warning(
+                            "⚠️ Response generated, but request logging failed."
+                        )
+
+                        if output["log_error"]:
+
+                            st.caption(
+                                f"Logging error: {output['log_error']}"
+                            )
+
+                    # ------------------------------------------------
+                    # Save assistant response
+                    # ------------------------------------------------
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": answer,
+                        }
+                    )
+
+                    st.session_state.last_result = output
+
+                except Exception as exc:
+
+                    st.error(
+                        "The RAG pipeline encountered an error."
+                    )
+
+                    st.exception(
+                        exc
+                    )
