@@ -1,960 +1,274 @@
 """
-Step 8A — Advanced Multi-Domain Retriever
+Groq LLM generator for the Daraz Advanced RAG application.
 
-Responsibilities:
-- Process the user's query
-- Detect domains and intents
-- Handle complex queries
-- Retrieve independently for each relevant domain/subquery
-- Combine results
-- Deduplicate chunks
-- Rerank evidence
-- Preserve complete metadata
-- Prevent one domain from hiding another domain
+Generates grounded answers using retrieved evidence and requires
+source citations in the format:
 
-Pipeline:
-
-User Query
-    ↓
-Query Processor
-    ↓
-Subqueries + Domains
-    ↓
-FAISS + BM25 Hybrid Retrieval
-    ↓
-Merge Results
-    ↓
-Deduplicate
-    ↓
-Cross-Encoder Reranking
-    ↓
-Final Evidence
+[SOURCE: CHUNK-ID]
 """
 
+import os
+import re
 from typing import Any, Dict, List, Optional
-from dataclasses import asdict, is_dataclass
 
-from .query_processor import QueryProcessor
-from .retriever import HybridRetriever
-from .reranker import CrossEncoderReranker
+from dotenv import load_dotenv
+from groq import Groq
 
 
-class AdvancedRetriever:
+load_dotenv()
 
-    # Number of candidates retrieved from each domain/subquery
-    CANDIDATE_K = 5
 
-    # Maximum final evidence chunks
-    FINAL_K = 6
+class GroqGenerator:
+    """Generate grounded answers using a Groq-hosted LLM."""
 
-    # Maximum chunks from one document
-    MAX_PER_DOCUMENT = 3
-
-    def __init__(self):
-
-        print("Initializing AdvancedRetriever...")
-
-        # --------------------------------------------------------------
-        # Query Processor
-        # --------------------------------------------------------------
-
-        print("\n[1/3] Loading Query Processor...")
-
-        self.query_processor = QueryProcessor()
-
-        print("Query Processor ready.")
-
-        # --------------------------------------------------------------
-        # Hybrid Retriever
-        # --------------------------------------------------------------
-
-        print("\n[2/3] Loading Hybrid Retriever...")
-
-        self.hybrid_retriever = HybridRetriever()
-
-        print("Hybrid Retriever ready.")
-
-        # --------------------------------------------------------------
-        # Reranker
-        # --------------------------------------------------------------
-
-        print("\n[3/3] Loading Cross-Encoder Reranker...")
-
-        self.reranker = CrossEncoderReranker()
-
-        print("Cross-Encoder Reranker ready.")
-
-        print("\nAdvancedRetriever initialized successfully.")
-
-    # ==================================================================
-    # ProcessedQuery compatibility
-    # ==================================================================
-
-    @staticmethod
-    def processed_query_to_dict(processed: Any) -> Dict[str, Any]:
-        """
-        Convert QueryProcessor's ProcessedQuery object into a dictionary.
-
-        Supports:
-        - dict
-        - dataclass
-        - normal Python object with __dict__
-        """
-
-        if isinstance(processed, dict):
-            return processed
-
-        if is_dataclass(processed):
-            return asdict(processed)
-
-        if hasattr(processed, "__dict__"):
-            return dict(vars(processed))
-
-        possible_fields = [
-            "original_query",
-            "query",
-            "normalized_query",
-            "rewritten_query",
-            "domains",
-            "primary_domain",
-            "intents",
-            "primary_intent",
-            "subqueries",
-            "is_complex",
-            "complex_query",
-            "confidence",
-        ]
-
-        result = {}
-
-        for field in possible_fields:
-
-            if hasattr(processed, field):
-                result[field] = getattr(processed, field)
-
-        return result
-
-    # ==================================================================
-    # Query processing
-    # ==================================================================
-
-    def process_query(self, query: str) -> Dict[str, Any]:
-
-        processed = self.query_processor.process(query)
-
-        return self.processed_query_to_dict(processed)
-
-    # ==================================================================
-    # Normalize domains
-    # ==================================================================
-
-    @staticmethod
-    def normalize_domains(
-        domains: Any,
-        primary_domain: Optional[str] = None,
-    ) -> List[str]:
-        """
-        Normalize domains into a clean list.
-        """
-
-        if domains is None:
-
-            result = []
-
-        elif isinstance(domains, str):
-
-            result = [
-                x.strip()
-                for x in domains.split(",")
-                if x.strip()
-            ]
-
-        elif isinstance(domains, (list, tuple, set)):
-
-            result = [
-                str(x).strip()
-                for x in domains
-                if str(x).strip()
-            ]
-
-        else:
-
-            result = []
-
-        if primary_domain:
-
-            primary_domain = str(primary_domain).strip()
-
-            if primary_domain and primary_domain not in result:
-                result.insert(0, primary_domain)
-
-        # Remove duplicates while preserving order
-        unique = []
-
-        for domain in result:
-
-            if domain not in unique:
-                unique.append(domain)
-
-        return unique
-
-    # ==================================================================
-    # Build retrieval plan
-    # ==================================================================
-
-    def build_retrieval_plan(
+    def __init__(
         self,
-        query: str,
-        processed: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """
-        Build independent retrieval tasks.
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 1200,
+    ):
+        self.api_key = os.getenv("GROQ_API_KEY")
 
-        Important behavior:
+        if not self.api_key:
+            raise ValueError(
+                "GROQ_API_KEY is not configured. "
+                "Add GROQ_API_KEY to Streamlit Cloud Secrets."
+            )
 
-        Simple query:
-            one query + one domain
-
-        Complex multi-domain query:
-            each subquery is paired with its appropriate domain.
-
-        If the QueryProcessor gives subqueries without explicit
-        domain assignments, domains are distributed intelligently.
-        """
-
-        domains = self.normalize_domains(
-            processed.get("domains"),
-            processed.get("primary_domain"),
+        self.model = model or os.getenv(
+            "GROQ_MODEL",
+            "openai/gpt-oss-120b",
         )
 
-        subqueries = processed.get("subqueries")
+        self.temperature = temperature
+        self.max_tokens = max_tokens
 
-        if isinstance(subqueries, str):
-            subqueries = [subqueries]
-
-        if not subqueries:
-            subqueries = [query]
-
-        subqueries = [
-            str(q).strip()
-            for q in subqueries
-            if str(q).strip()
-        ]
-
-        if not subqueries:
-            subqueries = [query]
-
-        plan = []
-
-        # --------------------------------------------------------------
-        # Simple query
-        # --------------------------------------------------------------
-
-        if len(subqueries) == 1:
-
-            subquery = subqueries[0]
-
-            domain = domains[0] if domains else None
-
-            plan.append(
-                {
-                    "query": subquery,
-                    "domain": domain,
-                }
-            )
-
-            return plan
-
-        # --------------------------------------------------------------
-        # Complex query
-        # --------------------------------------------------------------
-
-        # If there are equal numbers of subqueries and domains,
-        # map them directly.
-        if len(subqueries) == len(domains):
-
-            for subquery, domain in zip(subqueries, domains):
-
-                plan.append(
-                    {
-                        "query": subquery,
-                        "domain": domain,
-                    }
-                )
-
-            return plan
-
-        # --------------------------------------------------------------
-        # More subqueries than domains
-        # --------------------------------------------------------------
-
-        if domains:
-
-            for index, subquery in enumerate(subqueries):
-
-                if index < len(domains):
-
-                    domain = domains[index]
-
-                else:
-
-                    # For extra subqueries, use the primary domain
-                    domain = domains[0]
-
-                plan.append(
-                    {
-                        "query": subquery,
-                        "domain": domain,
-                    }
-                )
-
-            return plan
-
-        # --------------------------------------------------------------
-        # No domains detected
-        # --------------------------------------------------------------
-
-        for subquery in subqueries:
-
-            plan.append(
-                {
-                    "query": subquery,
-                    "domain": None,
-                }
-            )
-
-        return plan
-
-    # ==================================================================
-    # Domain-aware fallback
-    # ==================================================================
+        self.client = Groq(api_key=self.api_key)
 
     @staticmethod
-    def infer_domain_for_subquery(
-        subquery: str,
-        domains: List[str],
-        index: int,
-    ) -> Optional[str]:
-        """
-        Lightweight fallback for assigning a domain.
+    def _get_value(item: Any, key: str, default: Any = None) -> Any:
+        """Safely retrieve a value from dictionaries or objects."""
+        if isinstance(item, dict):
+            return item.get(key, default)
 
-        This is only used when QueryProcessor does not provide enough
-        information to map subqueries to domains.
-        """
+        return getattr(item, key, default)
 
-        if not domains:
-            return None
+    def _format_evidence(self, evidence: List[Any]) -> str:
+        """Convert retrieved evidence into a grounded context block."""
 
-        text = subquery.lower()
+        formatted = []
 
-        domain_keywords = {
-            "returns": [
-                "return",
-                "returned",
-                "eligible",
-                "eligibility",
-                "laptop",
-                "product",
-            ],
-            "refunds": [
-                "refund",
-                "refunded",
-                "money back",
-                "reimbursement",
-            ],
-            "delivery": [
-                "delivery",
-                "deliver",
-                "delayed",
-                "delay",
-                "courier",
-                "shipment",
-                "shipping",
-            ],
-            "payments": [
-                "payment",
-                "paid",
-                "card",
-                "wallet",
-                "cod",
-                "deducted",
-            ],
-            "sellers": [
-                "seller",
-                "selling",
-                "seller account",
-                "onboarding",
-            ],
-            "customer_support": [
-                "support",
-                "contact",
-                "complaint",
-                "help",
-            ],
-        }
-
-        scores = {}
-
-        for domain in domains:
-
-            keywords = domain_keywords.get(domain, [])
-
-            score = 0
-
-            for keyword in keywords:
-
-                if keyword in text:
-                    score += 1
-
-            scores[domain] = score
-
-        if scores:
-
-            best_domain = max(
-                scores,
-                key=scores.get,
+        for i, item in enumerate(evidence, start=1):
+            chunk_id = (
+                self._get_value(item, "chunk_id")
+                or self._get_value(item, "id")
+                or self._get_value(item, "citation_id")
+                or f"EVIDENCE-{i}"
             )
 
-            if scores[best_domain] > 0:
-                return best_domain
-
-        # Last fallback
-        return domains[index % len(domains)]
-
-    # ==================================================================
-    # Retrieve candidates
-    # ==================================================================
-
-    def retrieve_candidates(
-        self,
-        retrieval_plan: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """
-        Retrieve candidates independently for every retrieval task.
-        """
-
-        all_candidates = []
-
-        for task_index, task in enumerate(retrieval_plan):
-
-            subquery = task["query"]
-            domain = task.get("domain")
-
-            print("\n" + "=" * 80)
-
-            print("RETRIEVING SUBQUERY")
-            print(f"  Query: {subquery}")
-            print(f"  Domain filter: {domain}")
-
-            candidates = self.hybrid_retriever.retrieve(
-                query=subquery,
-                top_k=self.CANDIDATE_K,
-                domain=domain,
+            text = (
+                self._get_value(item, "text")
+                or self._get_value(item, "content")
+                or self._get_value(item, "chunk_text")
+                or ""
             )
 
-            print(
-                f"  Hybrid candidates: {len(candidates)}"
+            domain = self._get_value(item, "domain", "")
+            document_type = self._get_value(
+                item,
+                "document_type",
+                "",
             )
 
-            for candidate in candidates:
+            formatted.append(
+                f"""SOURCE ID: {chunk_id}
+DOMAIN: {domain}
+DOCUMENT TYPE: {document_type}
+CONTENT:
+{text}
+"""
+            )
 
-                item = dict(candidate)
+        return "\n-------------------------\n".join(formatted)
 
-                item["source_query"] = subquery
-                item["source_domain"] = domain
-                item["retrieval_task"] = task_index + 1
-
-                all_candidates.append(item)
-
-        return all_candidates
-
-    # ==================================================================
-    # Deduplicate
-    # ==================================================================
-
-    @staticmethod
-    def deduplicate_candidates(
-        candidates: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Deduplicate using chunk_id.
-
-        If the same chunk is retrieved by multiple subqueries,
-        preserve the first occurrence and record all source queries.
-        """
-
-        unique = {}
-        source_queries = {}
-
-        for item in candidates:
-
-            chunk_id = item.get("chunk_id")
-
-            if not chunk_id:
-                continue
-
-            if chunk_id not in unique:
-
-                unique[chunk_id] = dict(item)
-
-                source_queries[chunk_id] = []
-
-            source_query = item.get("source_query")
-
-            if source_query and source_query not in source_queries[chunk_id]:
-
-                source_queries[chunk_id].append(source_query)
-
-        results = []
-
-        for chunk_id, item in unique.items():
-
-            item["source_queries"] = source_queries[chunk_id]
-
-            results.append(item)
-
-        return results
-
-    # ==================================================================
-    # Reranking
-    # ==================================================================
-
-    def rerank_candidates(
+    def _build_prompt(
         self,
         query: str,
-        candidates: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """
-        Rerank candidates using the cross encoder.
+        evidence: List[Any],
+    ) -> str:
+        """Build a grounded RAG prompt."""
 
-        Metadata from the original candidate is restored after
-        reranking.
-        """
+        context = self._format_evidence(evidence)
 
-        if not candidates:
-            return []
+        return f"""
+You are a professional Daraz Operations and Policy Decision Support Assistant.
 
-        print(
-            f"\nReranking {len(candidates)} candidates..."
-        )
+Answer the user's question using ONLY the retrieved evidence provided below.
 
-        reranked = self.reranker.rerank(
-            query=query,
-            candidates=candidates,
-            top_k=len(candidates),
-        )
+USER QUESTION:
+{query}
 
-        candidate_map = {
-            item["chunk_id"]: item
-            for item in candidates
-            if item.get("chunk_id")
-        }
+RETRIEVED EVIDENCE:
+{context}
 
-        final = []
+STRICT RULES:
 
-        for rank, reranked_item in enumerate(
-            reranked,
-            start=1,
-        ):
+1. Use only information supported by the retrieved evidence.
+2. Do not invent policies, procedures, deadlines, fees, eligibility rules,
+   or operational facts.
+3. If the evidence does not contain enough information, clearly say that
+   the available knowledge base does not contain enough information.
+4. Every factual claim based on retrieved evidence must have a citation.
+5. Use citations exactly in this format:
 
-            chunk_id = reranked_item.get("chunk_id")
+[SOURCE: CHUNK-ID]
 
-            original = candidate_map.get(chunk_id)
+6. Use the actual SOURCE ID supplied in the evidence.
+7. Do not create fake source IDs.
+8. When multiple sources support a statement, cite each relevant source.
+9. Keep the answer concise but useful.
+10. Prefer bullet points when explaining procedures, timelines, or conditions.
+11. Do not mention internal RAG implementation details unless the user asks.
 
-            if original is None:
-                continue
+ANSWER:
+""".strip()
 
-            merged = dict(original)
-
-            merged["reranker_score"] = (
-                reranked_item.get("reranker_score")
-            )
-
-            merged["reranked"] = True
-            merged["reranker_rank"] = rank
-
-            final.append(merged)
-
-        return final
-
-    # ==================================================================
-    # Final evidence selection
-    # ==================================================================
-
-    def select_final_evidence(
-        self,
-        reranked: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """
-        Select final evidence while maintaining document diversity.
-
-        Maximum:
-        - FINAL_K total chunks
-        - MAX_PER_DOCUMENT chunks from one document
-        """
-
-        selected = []
-
-        document_counts = {}
-
-        for item in reranked:
-
-            document_id = item.get(
-                "document_id",
-                item.get("file_name", "unknown"),
-            )
-
-            current_count = document_counts.get(
-                document_id,
-                0,
-            )
-
-            if current_count >= self.MAX_PER_DOCUMENT:
-                continue
-
-            selected.append(item)
-
-            document_counts[document_id] = (
-                current_count + 1
-            )
-
-            if len(selected) >= self.FINAL_K:
-                break
-
-        return selected
-
-    # ==================================================================
-    # Main retrieval function
-    # ==================================================================
-
-    def retrieve(
+    def generate(
         self,
         query: str,
-    ) -> Dict[str, Any]:
+        evidence: List[Any],
+    ) -> str:
         """
-        Complete advanced retrieval pipeline.
+        Generate a grounded answer.
+
+        Parameters
+        ----------
+        query:
+            User's question.
+
+        evidence:
+            Retrieved evidence chunks.
+
+        Returns
+        -------
+        str
+            LLM-generated grounded answer.
         """
 
         if not query or not query.strip():
+            return "Please provide a question."
 
-            raise ValueError(
-                "Query cannot be empty."
+        if not evidence:
+            return (
+                "I could not find relevant information in the available "
+                "knowledge base."
             )
 
-        query = query.strip()
+        prompt = self._build_prompt(query, evidence)
 
-        # --------------------------------------------------------------
-        # Query analysis
-        # --------------------------------------------------------------
-
-        processed = self.process_query(query)
-
-        domains = self.normalize_domains(
-            processed.get("domains"),
-            processed.get("primary_domain"),
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a factual enterprise operations assistant. "
+                        "Ground every answer in the supplied evidence."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
         )
 
-        # --------------------------------------------------------------
-        # Build retrieval plan
-        # --------------------------------------------------------------
+        answer = response.choices[0].message.content
 
-        retrieval_plan = self.build_retrieval_plan(
-            query=query,
-            processed=processed,
-        )
+        if not answer:
+            return (
+                "The language model returned an empty response. "
+                "Please try the question again."
+            )
 
-        # --------------------------------------------------------------
-        # Improve domain assignment
-        # --------------------------------------------------------------
+        return answer.strip()
 
-        for index, task in enumerate(retrieval_plan):
-
-            if task.get("domain") is None:
-
-                task["domain"] = self.infer_domain_for_subquery(
-                    subquery=task["query"],
-                    domains=domains,
-                    index=index,
-                )
-
-        # --------------------------------------------------------------
-        # Retrieve
-        # --------------------------------------------------------------
-
-        raw_candidates = self.retrieve_candidates(
-            retrieval_plan
-        )
-
-        # --------------------------------------------------------------
-        # Deduplicate
-        # --------------------------------------------------------------
-
-        unique_candidates = self.deduplicate_candidates(
-            raw_candidates
-        )
-
-        # --------------------------------------------------------------
-        # Reranking
-        # --------------------------------------------------------------
-
-        # Use the original query for global reranking.
-        reranked = self.rerank_candidates(
-            query=query,
-            candidates=unique_candidates,
-        )
-
-        # --------------------------------------------------------------
-        # Final evidence
-        # --------------------------------------------------------------
-
-        final_evidence = self.select_final_evidence(
-            reranked
-        )
-
-        # --------------------------------------------------------------
-        # Return structured result
-        # --------------------------------------------------------------
+    def get_model_info(self) -> Dict[str, Any]:
+        """Return generator configuration for the Streamlit UI."""
 
         return {
-            "original_query": query,
-            "query_analysis": processed,
-            "domains": domains,
-            "retrieval_plan": retrieval_plan,
-            "raw_results": raw_candidates,
-            "unique_results": unique_candidates,
-            "reranked_results": reranked,
-            "final_evidence": final_evidence,
-            "statistics": {
-                "raw_results": len(raw_candidates),
-                "unique_results": len(unique_candidates),
-                "reranked_results": len(reranked),
-                "final_results": len(final_evidence),
-            },
+            "provider": "Groq",
+            "model": self.model,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
         }
 
-    # ==================================================================
-    # Pretty debug output
-    # ==================================================================
 
-    def debug_retrieve(
-        self,
-        query: str,
-    ) -> Dict[str, Any]:
-        """
-        Run retrieval and print a detailed diagnostic report.
-        """
+def extract_citations(answer: str) -> List[str]:
+    """
+    Extract [SOURCE: CHUNK-ID] citations from an answer.
+    """
 
-        result = self.retrieve(query)
+    if not answer:
+        return []
 
-        print("\n")
-        print("=" * 80)
-        print("ADVANCED RETRIEVAL RESULT")
-        print("=" * 80)
+    pattern = r"\[SOURCE:\s*([^\]]+)\]"
 
-        print("\nORIGINAL QUERY")
-        print(result["original_query"])
+    citations = re.findall(pattern, answer)
 
-        analysis = result["query_analysis"]
+    # Preserve order while removing duplicates.
+    unique = []
 
-        print("\nQUERY ANALYSIS")
+    for citation in citations:
+        citation = citation.strip()
 
-        print(
-            "Domains:",
-            ", ".join(result["domains"])
-            if result["domains"]
-            else "None",
-        )
+        if citation and citation not in unique:
+            unique.append(citation)
 
-        print(
-            "Primary domain:",
-            analysis.get(
-                "primary_domain",
-                "None",
-            ),
-        )
+    return unique
 
-        intents = analysis.get("intents", [])
-
-        if isinstance(intents, list):
-            intents_text = ", ".join(
-                str(x) for x in intents
-            )
-        else:
-            intents_text = str(intents)
-
-        print(
-            "Intents:",
-            intents_text or "None",
-        )
-
-        print(
-            "Primary intent:",
-            analysis.get(
-                "primary_intent",
-                "None",
-            ),
-        )
-
-        print(
-            "Complex query:",
-            analysis.get(
-                "is_complex",
-                analysis.get(
-                    "complex_query",
-                    False,
-                ),
-            ),
-        )
-
-        print("\nRETRIEVAL PLAN")
-
-        for index, task in enumerate(
-            result["retrieval_plan"],
-            start=1,
-        ):
-
-            print(
-                f"{index}. {task['query']}"
-            )
-
-            print(
-                f"   Domain filter: {task.get('domain')}"
-            )
-
-        stats = result["statistics"]
-
-        print("\nRETRIEVAL STATISTICS")
-
-        print(
-            "Raw results:",
-            stats["raw_results"],
-        )
-
-        print(
-            "Unique results:",
-            stats["unique_results"],
-        )
-
-        print(
-            "Reranked results:",
-            stats["reranked_results"],
-        )
-
-        print(
-            "Final results:",
-            stats["final_results"],
-        )
-
-        print("\n")
-        print("-" * 80)
-        print("FINAL EVIDENCE")
-        print("-" * 80)
-
-        for index, item in enumerate(
-            result["final_evidence"],
-            start=1,
-        ):
-
-            print("\n")
-            print("-" * 80)
-
-            print(
-                f"Final Rank: {index}"
-            )
-
-            print(
-                f"Chunk: {item.get('chunk_id')}"
-            )
-
-            print(
-                f"Reranker Score: "
-                f"{item.get('reranker_score')}"
-            )
-
-            print(
-                f"Document: "
-                f"{item.get('file_name')}"
-            )
-
-            print(
-                f"Document ID: "
-                f"{item.get('document_id')}"
-            )
-
-            print(
-                f"Domain: "
-                f"{item.get('domain')}"
-            )
-
-            print(
-                f"Document Type: "
-                f"{item.get('document_type')}"
-            )
-
-            print(
-                f"Page: "
-                f"{item.get('page')}"
-            )
-
-            print(
-                f"Section: "
-                f"{item.get('section')}"
-            )
-
-            print(
-                "Source Queries:",
-                ", ".join(
-                    item.get(
-                        "source_queries",
-                        [],
-                    )
-                ),
-            )
-
-            print("\nTEXT:")
-
-            print(
-                item.get(
-                    "text",
-                    "",
-                )
-            )
-
-        return result
-
-
-# ======================================================================
-# Standalone test
-# ======================================================================
 
 if __name__ == "__main__":
+    """
+    Basic standalone smoke test.
 
-    print("=" * 80)
-    print("STEP 8A — MULTI-DOMAIN ADVANCED RETRIEVAL TEST")
-    print("=" * 80)
+    This requires GROQ_API_KEY to be configured.
+    """
 
-    retriever = AdvancedRetriever()
+    generator = GroqGenerator()
 
-    test_queries = [
-
-        "Can a customer return a product?",
-
-        "How long does a refund take?",
-
-        "What payment methods are available?",
-
-        "Can I return a laptop after 10 days and how long will my refund take?",
-
-        "My order is delayed, what should I do and how long can delivery take?",
-
-        "My payment failed and the amount was deducted, what should I do?",
+    test_evidence = [
+        {
+            "chunk_id": "REF-002-P01-C001",
+            "domain": "refunds",
+            "document_type": "refund_timelines",
+            "text": (
+                "Refund processing timelines depend on the payment method "
+                "used for the original transaction."
+            ),
+        },
+        {
+            "chunk_id": "REF-002-P01-C002",
+            "domain": "refunds",
+            "document_type": "refund_timelines",
+            "text": (
+                "Bank-related refunds may require additional processing "
+                "time after the refund has been initiated."
+            ),
+        },
     ]
 
-    for query in test_queries:
+    question = "How long does a refund take?"
 
-        retriever.debug_retrieve(query)
+    answer = generator.generate(
+        question,
+        test_evidence,
+    )
 
-    print("\n")
-    print("=" * 80)
-    print("STEP 8A TEST COMPLETE")
-    print("=" * 80)
+    print("\nGenerated answer:\n")
+    print(answer)
+
+    print("\nExtracted citations:")
+    print(extract_citations(answer))
