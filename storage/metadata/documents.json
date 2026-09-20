@@ -1,0 +1,123 @@
+[
+  {
+    "document_id": "SUP-001",
+    "file_name": "customer_support_guide.pdf",
+    "file_path": "data\\documents\\customer_support\\customer_support_guide.pdf",
+    "domain": "customer_support",
+    "document_type": "document",
+    "page_count": 1,
+    "chunk_count": 2,
+    "file_hash": "c006333e836527c087b00e6d66b8560b52278034fc211d802bcd7261c5234adf",
+    "indexed_at": "2026-09-20T17:23:07.558743"
+  },
+  {
+    "document_id": "DEL-001",
+    "file_name": "delivery_guidelines.pdf",
+    "file_path": "data\\documents\\delivery\\delivery_guidelines.pdf",
+    "domain": "delivery",
+    "document_type": "guideline",
+    "page_count": 1,
+    "chunk_count": 2,
+    "file_hash": "9ff0765f7d6c585214387a0c2d7e9065a05b73b59b2e5494515683eb391a5326",
+    "indexed_at": "2026-09-20T17:23:07.577385"
+  },
+  {
+    "document_id": "DEL-002",
+    "file_name": "delivery_timelines.pdf",
+    "file_path": "data\\documents\\delivery\\delivery_timelines.pdf",
+    "domain": "delivery",
+    "document_type": "timeline",
+    "page_count": 1,
+    "chunk_count": 1,
+    "file_hash": "96b68bd00890f5bcd64dab2b1fa2cea641c70da59e40bd364e220526d625b328",
+    "indexed_at": "2026-09-20T17:23:07.600671"
+  },
+  {
+    "document_id": "PAY-001",
+    "file_name": "payment_faqs.pdf",
+    "file_path": "data\\documents\\payments\\payment_faqs.pdf",
+    "domain": "payments",
+    "document_type": "faq",
+    "page_count": 1,
+    "chunk_count": 2,
+    "file_hash": "b18ab723a1bad82df5118bc3e0a9f56509faf95b56b1f01bb03760e817c8eda1",
+    "indexed_at": "2026-09-20T17:23:07.620651"
+  },
+  {
+    "document_id": "PAY-002",
+    "file_name": "payment_methods.pdf",
+    "file_path": "data\\documents\\payments\\payment_methods.pdf",
+    "domain": "payments",
+    "document_type": "reference",
+    "page_count": 1,
+    "chunk_count": 1,
+    "file_hash": "62af513b1d6d589e83aaa36f4444f5bf5a4296b6b67634bca228a3761da738b2",
+    "indexed_at": "2026-09-20T17:23:07.638391"
+  },
+  {
+    "document_id": "REF-001",
+    "file_name": "refund_procedures.pdf",
+    "file_path": "data\\documents\\refunds\\refund_procedures.pdf",
+    "domain": "refunds",
+    "document_type": "procedure",
+    "page_count": 1,
+    "chunk_count": 3,
+    "file_hash": "def201d7bc1ce94eb3a3ded32a7ef4699dd7d0e5583a2d2d301e4fce43531193",
+    "indexed_at": "2026-09-20T17:23:07.657577"
+  },
+  {
+    "document_id": "REF-002",
+    "file_name": "refund_timelines.pdf",
+    "file_path": "data\\documents\\refunds\\refund_timelines.pdf",
+    "domain": "refunds",
+    "document_type": "timeline",
+    "page_count": 1,
+    "chunk_count": 2,
+    "file_hash": "fbe2d8cbd7f029a1e8c8ea5504f50c3e8e1f9b3c291943c245ec4fa5d96e88aa",
+    "indexed_at": "2026-09-20T17:23:07.680806"
+  },
+  {
+    "document_id": "RET-001",
+    "file_name": "return_eligibility.pdf",
+    "file_path": "data\\documents\\returns\\return_eligibility.pdf",
+    "domain": "returns",
+    "document_type": "document",
+    "page_count": 1,
+    "chunk_count": 3,
+    "file_hash": "9ddb17523e4e2fea67afa4b37643605540da4d5a2f2b2949d513a7bdfee8c250",
+    "indexed_at": "2026-09-20T17:23:07.703858"
+  },
+  {
+    "document_id": "RET-002",
+    "file_name": "return_policy.pdf",
+    "file_path": "data\\documents\\returns\\return_policy.pdf",
+    "domain": "returns",
+    "document_type": "policy",
+    "page_count": 1,
+    "chunk_count": 2,
+    "file_hash": "abf8a0cdf4032842b612f0986492606854ed50a75cf2809709f0e5daa3c9dee6",
+    "indexed_at": "2026-09-20T17:23:07.721751"
+  },
+  {
+    "document_id": "SEL-001",
+    "file_name": "seller_onboarding.pdf",
+    "file_path": "data\\documents\\sellers\\seller_onboarding.pdf",
+    "domain": "sellers",
+    "document_type": "guide",
+    "page_count": 1,
+    "chunk_count": 2,
+    "file_hash": "62b963b6fcd303e0204d430ed7b5ed9f019acd0ae33260f1f9d29532a94dfc1b",
+    "indexed_at": "2026-09-20T17:23:07.738516"
+  },
+  {
+    "document_id": "SEL-002",
+    "file_name": "seller_policies.pdf",
+    "file_path": "data\\documents\\sellers\\seller_policies.pdf",
+    "domain": "sellers",
+    "document_type": "document",
+    "page_count": 1,
+    "chunk_count": 1,
+    "file_hash": "3d603a82d5e68cc7c83cc03bd6e655cd1979c6194aef35f83b8cde556a6e07d6",
+    "indexed_at": "2026-09-20T17:23:07.754425"
+  }
+]
