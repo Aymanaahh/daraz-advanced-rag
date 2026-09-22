@@ -39,11 +39,15 @@ class CitationValidator:
     # --------------------------------------------------------------
 
     SOURCE_CITATION_PATTERN = re.compile(
-        r"\[SOURCE:\s*([A-Za-z0-9_-]+)\]"
+    r"\[SOURCE:\s*([A-Za-z0-9_-]+)\]"
+    )
+
+    BRACKET_SOURCE_CITATION_PATTERN = re.compile(
+    r"【SOURCE:\s*([A-Za-z0-9_-]+)】"
     )
 
     BRACKET_CITATION_PATTERN = re.compile(
-        r"【\s*([A-Za-z0-9_-]+)\s*】"
+    r"【\s*([A-Za-z0-9_-]+)\s*】"
     )
 
     # --------------------------------------------------------------
@@ -81,26 +85,22 @@ class CitationValidator:
 
         citations = []
 
-        # ----------------------------------------------------------
         # Format 1:
         # [SOURCE: REF-002-P01-C001]
-        # ----------------------------------------------------------
-
         citations.extend(
-            self.SOURCE_CITATION_PATTERN.findall(
-                answer
-            )
+            self.SOURCE_CITATION_PATTERN.findall(answer)
         )
 
-        # ----------------------------------------------------------
         # Format 2:
-        # 【REF-002-P01-C001】
-        # ----------------------------------------------------------
-
+        # 【SOURCE: REF-002-P01-C001】
         citations.extend(
-            self.BRACKET_CITATION_PATTERN.findall(
-                answer
-            )
+            self.BRACKET_SOURCE_CITATION_PATTERN.findall(answer)
+        )
+
+        # Format 3:
+        # 【REF-002-P01-C001】
+        citations.extend(
+          self.BRACKET_CITATION_PATTERN.findall(answer)
         )
 
         # ----------------------------------------------------------
